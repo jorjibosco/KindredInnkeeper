@@ -1,7 +1,6 @@
 using Il2CppSystem;
 using KindredInnkeeper.Commands.Converters;
 using KindredInnkeeper.Services;
-using KindreInnkeeper.Services;
 using Newtonsoft.Json;
 using ProjectM;
 using ProjectM.CastleBuilding;
@@ -30,14 +29,14 @@ internal class InnCommands
 		var clanEntity = Core.InnService.GetInnClan();
 		if (clanEntity != Entity.Null)
 		{
-			ctx.Reply($"The Inn already exists with the clan <color=white>{clanEntity.Read<ClanTeam>().Name}</color>.");
+			ctx.Reply($"The Inn already exists with the clan <color=#00FFBB>{clanEntity.Read<ClanTeam>().Name}</color>.");
 			return;
 		}
 
 		if (Core.InnService.MakeCurrentClanAnInn(ctx.Event.SenderCharacterEntity))
 		{
 			clanEntity = Core.InnService.GetInnClan();
-			ctx.Reply($"Successfully made the clan <color=white>{clanEntity.Read<ClanTeam>().Name}</color> the Inn.");
+			ctx.Reply($"Successfully made the clan <color=#00FFBB>{clanEntity.Read<ClanTeam>().Name}</color> the Inn.");
 		}
 		else
 		{
@@ -111,7 +110,7 @@ internal class InnCommands
             }
         }
 
-        ctx.Reply($"<color=white>You have joined the Inn.</color>");
+        ctx.Reply($"You have joined <color=#00FFBB>the Inn.</color>");
     }
 
 	[Command("info", description: "Displays the information of the Inn", adminOnly: false)]
@@ -132,13 +131,13 @@ internal class InnCommands
 	public static void DisplayHelp(ChatCommandContext ctx)
 	{
 		var help = new StringBuilder();
-		help.AppendLine("<color=yellow>Inn Helpdesk!</color>");
-		help.AppendLine("<color=green>.inn info</color> - Info on the Inn.");
-		help.AppendLine("<color=green>.inn vacancy</color> - Reports occupancy amounts in the Inn.");
-		help.AppendLine("<color=green>.inn claimroom</color> - Use this while standing in a vacant room in an inn. Empty rooms have a purple rune doormat.");
-		help.AppendLine("<color=green>.inn leaveroom</color> - Use this to check out of your room.");
-		help.AppendLine("<color=green>.inn findroom</color> - Creates a spotlight to your door.");
-		help.AppendLine("<color=green>.inn quests</color> - Complete beginning shelter quests.");
+		help.AppendLine("<color=#00FFBB>— Inn Helpdesk —</color>");
+		help.AppendLine("<color=#00FFBB>.inn info</color> - Inn Info");
+		help.AppendLine("<color=#00FFBB>.inn vacancy</color> - Room availability");
+		help.AppendLine("<color=#00FFBB>.inn claimroom</color> - Use facing a vacant room");
+		help.AppendLine("<color=#00FFBB>.inn leaveroom</color> - Leave your room");
+		help.AppendLine("<color=#00FFBB>.inn findroom</color> - Spotlights your room");
+		help.AppendLine("<color=#00FFBB>.inn quests</color> - Complete shelter quests");
 		ctx.Reply(help.ToString());
 	}
 
@@ -183,7 +182,6 @@ internal class InnCommands
 
         if (Core.InnService.GetRoomIn(ctx.Event.SenderCharacterEntity, out var roomIn))
         {
-			Core.InnService.ClearRoom(roomIn);
 			switch (Core.InnService.SetRoomOwnerIfEmpty(roomIn, ctx.Event.SenderCharacterEntity))
             {
                 case InnService.RoomSetFailure.None:
@@ -277,10 +275,10 @@ internal class InnCommands
             switch(Core.InnService.SetRoomOwner(roomIn, player.Value.CharEntity))
             {
                 case InnService.RoomSetFailure.None:
-                    ctx.Reply($"Set the owner of the room to <color=white>{player.Value.UserEntity.Read<User>().CharacterName}</color>.");
+                    ctx.Reply($"Set the owner of the room to <color=#00FFBB>{player.Value.UserEntity.Read<User>().CharacterName}</color>.");
                     return;
                 case InnService.RoomSetFailure.NotInInnClan:
-                    ctx.Reply($"<color=white>{player.Value.UserEntity.Read<User>().CharacterName} is not in the Inn clan.");
+                    ctx.Reply($"<color=#00FFBB>{player.Value.UserEntity.Read<User>().CharacterName} is not in the Inn clan.");
                     return;
             }
         }
@@ -297,7 +295,7 @@ internal class InnCommands
 				ctx.Reply("This room is not claimed.");
 				return;
 			}
-			ctx.Reply($"The owner of this room is <color=white>{roomOwner.Read<PlayerCharacter>().Name}</color>.");
+			ctx.Reply($"The owner of this room is <color=#00FFBB>{roomOwner.Read<PlayerCharacter>().Name}</color>.");
 		}
 		else
 		{

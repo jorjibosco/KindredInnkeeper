@@ -23,17 +23,20 @@ internal class InnService
 	const float FIND_SPOTLIGHT_DURATION = 15f;
 
 	readonly List<Entity> playersInInn = [];
-    Entity innClanEntity = Entity.Null;
+	Entity innClanEntity = Entity.Null;
 
-    EntityQuery castleHeartQuery;
+	EntityQuery castleHeartQuery;
 	EntityQuery innClanQuery;
 	EntityQuery roomQuery;
 	EntityQuery roomInnQuery;
 
 	readonly Dictionary<Entity, Entity> roomOwners = [];
 
-    public InnService()
-    {
+	readonly Dictionary<Entity, int> roomOwnerStrikes = [];
+	const int ROOM_RELEASE_STRIKES = 20;
+
+	public InnService()
+	{
 		var entityQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
 			.AddAll(new(Il2CppType.Of<CastleHeart>(), ComponentType.AccessMode.ReadWrite))
 			.WithOptions(EntityQueryOptions.IncludeDisabled);
@@ -75,7 +78,7 @@ internal class InnService
 		foreach (var room in innRooms)
 		{
 			var userOwner = room.Read<UserOwner>().Owner.GetEntityOnServer();
-			var character = userOwner!=Entity.Null ?
+			var character = userOwner != Entity.Null ?
 				userOwner.Read<User>().LocalCharacter.GetEntityOnServer() :
 				Entity.Null;
 			roomOwners.Add(room, character);
@@ -84,19 +87,52 @@ internal class InnService
 	}
 
 	public Entity GetInnClan()
-    {
-        if (innClanEntity.Equals(Entity.Null))
-        {
-            FindInnClan(out innClanEntity);
-        }
-        return innClanEntity;
-    }
+	{
+		if (innClanEntity.Equals(Entity.Null) || !Core.EntityManager.Exists(innClanEntity))
+		{
+			FindInnClan(out innClanEntity);
+		}
+		return innClanEntity;
+	}
 
-    public bool FindInnClan(out Entity clanEntity)
-    {
-        var clans = innClanQuery.ToEntityArray(Allocator.Temp);
+	// For KindredLogistics
+	public static bool IsCharacterInInnClan(Entity charEntity)
+	{
+		var instance = Core.InnService;
+		if (instance == null) return false;
 
-		foreach(var clan in clans)
+		return instance.IsInInnClan(charEntity);
+	}
+
+	public bool IsInInnClan(Entity charEntity)
+	{
+		var innClan = GetInnClan();
+		if (innClan.Equals(Entity.Null)) return false;
+		return IsInInnClan(charEntity, innClan);
+	}
+
+	static bool IsInInnClan(Entity charEntity, Entity innClan)
+	{
+		if (charEntity.Equals(Entity.Null)) return false;
+		if (!Core.EntityManager.Exists(charEntity)) return false;
+		if (!charEntity.Has<PlayerCharacter>()) return false;
+
+		var userEntity = charEntity.Read<PlayerCharacter>().UserEntity;
+		if (userEntity.Equals(Entity.Null)) return false;
+		if (!Core.EntityManager.Exists(userEntity)) return false;
+		if (!userEntity.Has<User>()) return false;
+
+		var clanEntity = userEntity.Read<User>().ClanEntity.GetEntityOnServer();
+		if (clanEntity.Equals(Entity.Null)) return false;
+
+		return clanEntity.Equals(innClan);
+	}
+
+	public bool FindInnClan(out Entity clanEntity)
+	{
+		var clans = innClanQuery.ToEntityArray(Allocator.Temp);
+
+		foreach (var clan in clans)
 		{
 			clanEntity = clan;
 			clans.Dispose();
@@ -137,11 +173,6 @@ internal class InnService
 		return true;
 	}
 
-	public void ClearRoom(Entity roomEntity)
-	{
-		Core.StartCoroutine(ClearRoom(roomEntity, roomOwners[roomEntity]));
-	}
-
 	IEnumerator ClearRoom(Entity roomEntity, Entity roomOwner = default)
 	{
 		List<Entity> inventoryEntities = [];
@@ -179,7 +210,7 @@ internal class InnService
 				if (attachmentEntity.Has<ResearchBuffer>())
 				{
 					var researchBuffer = Core.EntityManager.GetBuffer<ResearchBuffer>(attachmentEntity);
-					for (var i = 0; i<researchBuffer.Length; ++i)
+					for (var i = 0; i < researchBuffer.Length; ++i)
 					{
 						var research = researchBuffer[i];
 						research.IsResearchByStation = false;
@@ -297,6 +328,7 @@ internal class InnService
 
 			Core.StartCoroutine(ClearRoom(room, player));
 			roomOwners[room] = Entity.Null;
+			roomOwnerStrikes.Remove(room);
 			room.Write(new UserOwner() { Owner = Entity.Null });
 
 			AddUnclaimedSpotlightToRoom(room);
@@ -317,130 +349,154 @@ internal class InnService
 				continue;
 
 			// See if anyone left
-			var innClanTeamValue = innClan.Read<TeamData>().TeamValue;
 			foreach ((var room, var player) in roomOwners)
 			{
-				if (player.Equals(Entity.Null)) continue;
-				if (player.Read<Team>().Value != innClanTeamValue)
+				if (player.Equals(Entity.Null))
 				{
-					Core.Log.LogInfo($"Player {player.Read<PlayerCharacter>().Name} left the Inn clan, removing their room {room}");
-					Core.StartCoroutine(ClearRoom(room, player));
-					roomOwners[room] = Entity.Null;
-					room.Write(new UserOwner() { Owner = Entity.Null });
-					AddUnclaimedSpotlightToRoom(room);
+					roomOwnerStrikes.Remove(room);
+					continue;
 				}
+				if (!Core.EntityManager.Exists(player))
+				{
+					roomOwnerStrikes.Remove(room);
+					continue;
+				}
+
+				if (IsInInnClan(player, innClan))
+				{
+					roomOwnerStrikes.Remove(room);
+					continue;
+				}
+
+				roomOwnerStrikes.TryGetValue(room, out var strikes);
+				strikes++;
+				if (strikes < ROOM_RELEASE_STRIKES)
+				{
+					roomOwnerStrikes[room] = strikes;
+					continue;
+				}
+
+				Core.Log.LogInfo($"Player {player.Read<PlayerCharacter>().Name} left the Inn clan, removing their room {room}");
+				roomOwnerStrikes.Remove(room);
+				Core.StartCoroutine(ClearRoom(room, player));
+				roomOwners[room] = Entity.Null;
+				room.Write(new UserOwner() { Owner = Entity.Null });
+				AddUnclaimedSpotlightToRoom(room);
 			}
 
 			// See if any rooms were removed
 			var roomsToRemove = roomOwners.Keys.Where(x => !Core.EntityManager.Exists(x)).ToArray();
 			foreach (var room in roomsToRemove)
+			{
 				roomOwners.Remove(room);
+				roomOwnerStrikes.Remove(room);
+			}
 		}
 	}
 
 	IEnumerator CheckPlayersEnteringInn()
-    {
-        var innTerritories = new List<int>();
-        var wait = new WaitForSeconds(2.5f);
-        while (true)
-        {
-            yield return wait;
-                
-            var innClan = GetInnClan();
-            if (innClan.Equals(Entity.Null))
-                continue;
+	{
+		var innTerritories = new List<int>();
+		var wait = new WaitForSeconds(2.5f);
+		while (true)
+		{
+			yield return wait;
 
-            var teamValue = innClan.Read<TeamData>().TeamValue;
+			var innClan = GetInnClan();
+			if (innClan.Equals(Entity.Null))
+				continue;
 
-            innTerritories.Clear();
-            var castleHearts = castleHeartQuery.ToEntityArray(Allocator.Temp);
-            foreach(var castleHeartEntity in castleHearts)
-            {
-                var heartTeam = castleHeartEntity.Read<Team>();
-                if (heartTeam.Value != teamValue)
-                    continue;
+			var teamValue = innClan.Read<TeamData>().TeamValue;
 
-                var pos = castleHeartEntity.Read<LocalToWorld>().Position;
-                var territoryIndex = Core.CastleTerritory.GetTerritoryIndex(pos);
-                if (territoryIndex != -1)
-                    innTerritories.Add(territoryIndex);
-            }
-            castleHearts.Dispose();
+			innTerritories.Clear();
+			var castleHearts = castleHeartQuery.ToEntityArray(Allocator.Temp);
+			foreach (var castleHeartEntity in castleHearts)
+			{
+				var heartTeam = castleHeartEntity.Read<Team>();
+				if (heartTeam.Value != teamValue)
+					continue;
 
-            foreach (var userEntity in Core.Players.GetCachedUsersOnline())
-            {
-                var user = userEntity.Read<User>();
-                var charEntity = user.LocalCharacter.GetEntityOnServer();
-                var pos = charEntity.Read<LocalToWorld>().Position;
-                var territoryIndex = Core.CastleTerritory.GetTerritoryIndex(pos);
-                if (innTerritories.Contains(territoryIndex))
-                {
+				var pos = castleHeartEntity.Read<LocalToWorld>().Position;
+				var territoryIndex = Core.CastleTerritory.GetTerritoryIndex(pos);
+				if (territoryIndex != -1)
+					innTerritories.Add(territoryIndex);
+			}
+			castleHearts.Dispose();
+
+			foreach (var userEntity in Core.Players.GetCachedUsersOnline())
+			{
+				var user = userEntity.Read<User>();
+				var charEntity = user.LocalCharacter.GetEntityOnServer();
+				var pos = charEntity.Read<LocalToWorld>().Position;
+				var territoryIndex = Core.CastleTerritory.GetTerritoryIndex(pos);
+				if (innTerritories.Contains(territoryIndex))
+				{
 					if (!playersInInn.Contains(userEntity))
-                    {
-                        playersInInn.Add(userEntity);
-                        Buffs.AddBuff(userEntity, charEntity, Prefabs.SetBonus_Silk_Twilight);
+					{
+						playersInInn.Add(userEntity);
+						Buffs.AddBuff(userEntity, charEntity, Prefabs.SetBonus_Silk_Twilight);
 
 						// Check if they aren't in the inn clan
-						if (charEntity.Read<Team>().Value != teamValue)
+						if (!IsInInnClan(charEntity, innClan))
 						{
-							var message = new FixedString512Bytes("<color=green>Welcome to the Inn!</color> Use <color=yellow>.inn join</color> to join. Inn Info: <color=yellow>.inn info</color>. Complete shelter quests: <color=yellow>.inn quests</color>.");
+							var message = new FixedString512Bytes("<color=#00FFBB>Welcome to the Inn!</color>\nUse <color=#00FFBB>.inn join</color> to join, <color=#00FFBB>.inn claimroom</color> to claim a room.\nType <color=#00FFBB>.inn info</color> for more information.");
 							ServerChatUtils.SendSystemMessageToClient(Core.EntityManager, user, ref message);
 						}
 					}
-                }
-                else
-                {
-                    if (playersInInn.Contains(userEntity))
-                    {
-                        playersInInn.Remove(userEntity);
-                        Buffs.RemoveBuff(charEntity, Prefabs.SetBonus_Silk_Twilight);
-                    }
-                }
+				}
+				else
+				{
+					if (playersInInn.Contains(userEntity))
+					{
+						playersInInn.Remove(userEntity);
+						Buffs.RemoveBuff(charEntity, Prefabs.SetBonus_Silk_Twilight);
+					}
+				}
 
-            }
-        }
-    }
+			}
+		}
+	}
 
-    public string AddRoomToInn(Entity player)
-    {
-        var clanTeam = GetInnClan();
-        if (clanTeam.Equals(Entity.Null))
-            return "There is no Inn clan";
+	public string AddRoomToInn(Entity player)
+	{
+		var clanTeam = GetInnClan();
+		if (clanTeam.Equals(Entity.Null))
+			return "There is no Inn clan";
 
-        var playerTilePos = player.Read<TilePosition>().Tile;
-        var playerHeight = player.Read<Height>().Value;
+		var playerTilePos = player.Read<TilePosition>().Tile;
+		var playerHeight = player.Read<Height>().Value;
 
-        var foundRoom = false;
-        var teamValue = clanTeam.Read<TeamData>().TeamValue;
-        var rooms = roomQuery.ToEntityArray(Allocator.Temp);
-        foreach (var room in rooms)
-        {
-            var floors = Core.EntityManager.GetBuffer<CastleRoomFloorsBuffer>(room);
-            if (floors.Length == 0)
-                continue;
+		var foundRoom = false;
+		var teamValue = clanTeam.Read<TeamData>().TeamValue;
+		var rooms = roomQuery.ToEntityArray(Allocator.Temp);
+		foreach (var room in rooms)
+		{
+			var floors = Core.EntityManager.GetBuffer<CastleRoomFloorsBuffer>(room);
+			if (floors.Length == 0)
+				continue;
 			if (floors[0].FloorEntity.GetEntityOnServer().Equals(Entity.Null))
 				continue;
-            if (floors[0].FloorEntity.GetEntityOnServer().Read<Team>().Value != teamValue)
-                continue;
-            foreach (var floor in floors)
-            {
-                var tileBounds = floor.FloorEntity.GetEntityOnServer().Read<TileBounds>().Value;
-                if (!tileBounds.Contains(playerTilePos)) continue;
+			if (floors[0].FloorEntity.GetEntityOnServer().Read<Team>().Value != teamValue)
+				continue;
+			foreach (var floor in floors)
+			{
+				var tileBounds = floor.FloorEntity.GetEntityOnServer().Read<TileBounds>().Value;
+				if (!tileBounds.Contains(playerTilePos)) continue;
 
-                var height = floor.FloorEntity.GetEntityOnServer().Read<StaticTransformCompatible>().NonStaticTransform_Height;
-                if (Mathf.Abs(playerHeight - height) < 0.1f)
-                {
-                    foundRoom = true;
-                    break;
-                }
-            }
+				var height = floor.FloorEntity.GetEntityOnServer().Read<StaticTransformCompatible>().NonStaticTransform_Height;
+				if (Mathf.Abs(playerHeight - height) < 0.1f)
+				{
+					foundRoom = true;
+					break;
+				}
+			}
 
-            if (foundRoom)
-            {
-                if (roomOwners.ContainsKey(room))
-                {
-                    return "Room has already been added to the Inn";
-                }
+			if (foundRoom)
+			{
+				if (roomOwners.ContainsKey(room))
+				{
+					return "Room has already been added to the Inn";
+				}
 
 				room.Add<UserOwner>();
 				room.Write(new UserOwner() { Owner = Entity.Null });
@@ -485,16 +541,16 @@ internal class InnService
 				Core.StartCoroutine(ClearRoom(room, Entity.Null));
 
 				roomOwners.Add(room, Entity.Null);
-                Core.Log.LogInfo($"Room added to Inn {room.Index}:{room.Version}");
-                break;
-            }
-        }
-        rooms.Dispose();
+				Core.Log.LogInfo($"Room added to Inn {room.Index}:{room.Version}");
+				break;
+			}
+		}
+		rooms.Dispose();
 
-        if (!foundRoom)
-            return "You are not in a room in the Inn";
-        return "";
-    }
+		if (!foundRoom)
+			return "You are not in a room in the Inn";
+		return "";
+	}
 
 	public bool RemoveRoomFromInn(Entity player)
 	{
@@ -512,133 +568,135 @@ internal class InnService
 
 
 	public enum RoomSetFailure
-    {
-        None,
-        RoomDoesNotExist,
-        NotInInnClan,
-        AlreadyClaimed
-    }
+	{
+		None,
+		RoomDoesNotExist,
+		NotInInnClan,
+		AlreadyClaimed
+	}
 
-    public RoomSetFailure SetRoomOwner(Entity room, Entity player)
-    {
-		var innClan = GetInnClan();
-		if (innClan.Equals(Entity.Null))
-			return RoomSetFailure.NotInInnClan;
-
-		if (player.Read<Team>().Value != innClan.Read<TeamData>().TeamValue)
-            return RoomSetFailure.NotInInnClan;
-        if (roomOwners.ContainsKey(room))
-        {
-            roomOwners[room] = player;
-			room.Write(new UserOwner() { Owner = player.Read<PlayerCharacter>().UserEntity });
-
-			RemoveUnclaimedSpotlightFromRoom(room);
-			Core.StartCoroutine(ClearRoom(room, player));
-			return RoomSetFailure.None;
-        }
-        return RoomSetFailure.RoomDoesNotExist;
-    }
-
-    public RoomSetFailure SetRoomOwnerIfEmpty(Entity room, Entity player)
+	public RoomSetFailure SetRoomOwner(Entity room, Entity player)
 	{
 		var innClan = GetInnClan();
 		if (innClan.Equals(Entity.Null))
 			return RoomSetFailure.NotInInnClan;
 
-		if (player.Read<Team>().Value != innClan.Read<TeamData>().TeamValue)
-            return RoomSetFailure.NotInInnClan;
-        if (roomOwners.TryGetValue(room, out var roomOwner))
-        {
-            if (roomOwner.Equals(Entity.Null))
-            {
-                roomOwners[room] = player;
+		if (!IsInInnClan(player, innClan))
+			return RoomSetFailure.NotInInnClan;
+		if (roomOwners.ContainsKey(room))
+		{
+			roomOwners[room] = player;
+			roomOwnerStrikes.Remove(room);
+			room.Write(new UserOwner() { Owner = player.Read<PlayerCharacter>().UserEntity });
+
+			RemoveUnclaimedSpotlightFromRoom(room);
+			Core.StartCoroutine(ClearRoom(room, player));
+			return RoomSetFailure.None;
+		}
+		return RoomSetFailure.RoomDoesNotExist;
+	}
+
+	public RoomSetFailure SetRoomOwnerIfEmpty(Entity room, Entity player)
+	{
+		var innClan = GetInnClan();
+		if (innClan.Equals(Entity.Null))
+			return RoomSetFailure.NotInInnClan;
+
+		if (!IsInInnClan(player, innClan))
+			return RoomSetFailure.NotInInnClan;
+		if (roomOwners.TryGetValue(room, out var roomOwner))
+		{
+			if (roomOwner.Equals(Entity.Null))
+			{
+				roomOwners[room] = player;
+				roomOwnerStrikes.Remove(room);
 				room.Write(new UserOwner() { Owner = player.Read<PlayerCharacter>().UserEntity });
 				RemoveUnclaimedSpotlightFromRoom(room);
 				Core.StartCoroutine(ClearRoom(room, player));
 				return RoomSetFailure.None;
-            }
-            return RoomSetFailure.AlreadyClaimed;
-        }
-        return RoomSetFailure.RoomDoesNotExist;
-    }
+			}
+			return RoomSetFailure.AlreadyClaimed;
+		}
+		return RoomSetFailure.RoomDoesNotExist;
+	}
 
 	public bool HasClaimedARoom(Entity player) => roomOwners.ContainsValue(player);
 
-    public bool GetRoomOwner(Entity room, out Entity roomOwner)
-    {
-        return roomOwners.TryGetValue(room, out roomOwner);
-    }
+	public bool GetRoomOwner(Entity room, out Entity roomOwner)
+	{
+		return roomOwners.TryGetValue(room, out roomOwner);
+	}
 
-    public bool GetRoomIn(Entity entity, out Entity room)
-    {
+	public bool GetRoomIn(Entity entity, out Entity room)
+	{
 		var tilePosition = entity.Read<TilePosition>().Tile;
-        var height = entity.Read<Height>().Value;
+		var height = entity.Read<Height>().Value;
 
-        foreach(var roomChecking in roomOwners.Keys)
-        {
+		foreach (var roomChecking in roomOwners.Keys)
+		{
 			if (!Core.EntityManager.Exists(roomChecking)) continue;
 
-            var floors = Core.EntityManager.GetBuffer<CastleRoomFloorsBuffer>(roomChecking);
-            foreach (var floor in floors)
-            {
-                var floorEntity = floor.FloorEntity.GetEntityOnServer();
-                var tileBounds = floorEntity.Read<TileBounds>().Value;
-                if (!tileBounds.Contains(tilePosition)) continue;
+			var floors = Core.EntityManager.GetBuffer<CastleRoomFloorsBuffer>(roomChecking);
+			foreach (var floor in floors)
+			{
+				var floorEntity = floor.FloorEntity.GetEntityOnServer();
+				var tileBounds = floorEntity.Read<TileBounds>().Value;
+				if (!tileBounds.Contains(tilePosition)) continue;
 
-                var floorHeight = floorEntity.Read<StaticTransformCompatible>().NonStaticTransform_Height;
-                if (Mathf.Abs(height - floorHeight) < 0.1f)
-                {
-                    room = roomChecking;
-                    return true;
-                }
-            }
-        }
+				var floorHeight = floorEntity.Read<StaticTransformCompatible>().NonStaticTransform_Height;
+				if (Mathf.Abs(height - floorHeight) < 0.1f)
+				{
+					room = roomChecking;
+					return true;
+				}
+			}
+		}
 
-        room = Entity.Null;
-        return false;
-    }
+		room = Entity.Null;
+		return false;
+	}
 
-    public IEnumerable<Entity> GetRoomOwners() => roomOwners.Values.Where(x => !x.Equals(Entity.Null));
+	public IEnumerable<Entity> GetRoomOwners() => roomOwners.Values.Where(x => !x.Equals(Entity.Null));
 
-    public int GetRoomCount() => roomOwners.Count;
+	public int GetRoomCount() => roomOwners.Count;
 
-    public int GetFreeRoomCount() => roomOwners.Count(x => x.Value.Equals(Entity.Null));
+	public int GetFreeRoomCount() => roomOwners.Count(x => x.Value.Equals(Entity.Null));
 
-    public bool GetRoomOwnerFromRoomIn(Entity entity, out Entity roomOwner)
-    {
-        if (GetRoomIn(entity, out var room))
-        {
-            return GetRoomOwner(room, out roomOwner);
-        }
-        roomOwner = Entity.Null;
-        return false;
-    }
+	public bool GetRoomOwnerFromRoomIn(Entity entity, out Entity roomOwner)
+	{
+		if (GetRoomIn(entity, out var room))
+		{
+			return GetRoomOwner(room, out roomOwner);
+		}
+		roomOwner = Entity.Null;
+		return false;
+	}
 
-    public bool GetRoomOwnerForNetworkId(NetworkId networkId, out Entity roomOwner)
-    {
-        foreach ((var room, var owner) in roomOwners)
-        {
+	public bool GetRoomOwnerForNetworkId(NetworkId networkId, out Entity roomOwner)
+	{
+		foreach ((var room, var owner) in roomOwners)
+		{
 			if (!Core.EntityManager.Exists(room)) continue;
 
 			var floors = Core.EntityManager.GetBuffer<CastleRoomFloorsBuffer>(room);
-            foreach (var floor in floors)
-            {
-                var attachments = Core.EntityManager.GetBuffer<CastleBuildingAttachToParentsBuffer>(floor.FloorEntity.GetEntityOnServer());
-                foreach (var attachment in attachments)
-                {
-                    var potentialEntity = attachment.ParentEntity.GetEntityOnServer();
-                    if (potentialEntity.Has<NetworkId>() && potentialEntity.Read<NetworkId>() == networkId)
-                    {
-                        roomOwner = owner;
-                        return true;
-                    }
-                }
-            }
-        }
+			foreach (var floor in floors)
+			{
+				var attachments = Core.EntityManager.GetBuffer<CastleBuildingAttachToParentsBuffer>(floor.FloorEntity.GetEntityOnServer());
+				foreach (var attachment in attachments)
+				{
+					var potentialEntity = attachment.ParentEntity.GetEntityOnServer();
+					if (potentialEntity.Has<NetworkId>() && potentialEntity.Read<NetworkId>() == networkId)
+					{
+						roomOwner = owner;
+						return true;
+					}
+				}
+			}
+		}
 
-        roomOwner = Entity.Null;
-        return false;
-    }
+		roomOwner = Entity.Null;
+		return false;
+	}
 
 	public static Entity GetDoorFromOwner(Entity owner)
 	{
@@ -714,9 +772,9 @@ internal class InnService
 		}
 	}
 
-	void AddUnclaimedSpotlights() 
+	void AddUnclaimedSpotlights()
 	{
-		foreach((var room, var owner) in roomOwners)
+		foreach ((var room, var owner) in roomOwners)
 		{
 			if (owner.Equals(Entity.Null))
 			{
@@ -762,7 +820,7 @@ internal class InnService
 				if (potentialDoor.Has<Door>())
 				{
 					RemoveClaimedDoorSpotlight(potentialDoor);
-				} 
+				}
 			}
 		}
 	}

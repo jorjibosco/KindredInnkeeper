@@ -14,12 +14,13 @@ internal class ConfigSettingsService
 		{
 			Info =
 				[
-				"<color=yellow>Welcome to the Inn!</color>",
-				"<color=green>1.</color> Use <color=green>.inn help</color> to view commands for use with the Inn.",
-				"<color=green>2.</color> This is temporary stay. Please find other accomodations asap.",
-				"<color=green>3.</color> Do not leave items unattended or steal from shared stations.",
-				"<color=green>4.</color> Claiming a plot kicks you from the Inn. Your storage will follow.",
-				"<color=green>5.</color> Leaving the clan will forfeit any items left in your room."
+				"<color=#00FFBB>Welcome to the Inn!</color>",
+				"<color=#00FFBB>1-</color> Use <color=#00FFBB>.inn help</color> to view Inn commands.",
+				"<color=#00FFBB>2-</color> Inn is designed for progression up to <color=#00FFBB>level 50</color>.",
+				"<color=#00FFBB>3-</color> Do not team up with Inn clan members besides your duo.",
+				"<color=#00FFBB>4-</color> Do not leave items unattended or steal from shared stations.",
+				"<color=#00FFBB>5-</color> Claiming a plot kicks you from the Inn. Your storage will follow.",
+				"<color=#00FFBB>6-</color> Leaving the clan will forfeit any items."
 				];
 		}
 

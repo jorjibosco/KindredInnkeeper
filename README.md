@@ -1,3 +1,28 @@
+<p align="center">
+  <img src="jorji-logo.png" width="256" alt="Jorji logo">
+</p>
+
+# KindredInnkeeper - Hengoria
+
+Fork of [KindredCommands](https://github.com/Odjit/KindredCommands) by Odjit that is used on Hengoria. Everything below the line is Odjit's original documentation.
+
+### Changes in this fork
+
+- **Room reset bug fix** - players no longer get their rooms resetted under any circumstance
+- **Logistics commands exploit fix** - residents can no longer steal loot using .pull commands
+- **Style changes** - text changes to fit the rest of the mods on Hengoria
+
+### Notes
+
+- Clan membership used to be checked with the player's teamtags, so duels, arenas and the Gaius fight made players lose the loot in their rooms. It is now tied to the player's account instead.
+- Rooms are only released after a player has been out of the Inn clan for about a second, so a momentary glitch or a respawn can't wipe a room.
+- The Inn clan is looked up again if the saved one stops existing.
+- `.inn claimroom` used to clear the room before checking whether it was already claimed by someone else - fixed.
+- Includes the bridge that KindredLogistics uses to detect Inn residents. Use my [KindredLogistics fork](https://github.com/jorjibosco/KindredLogistics) to stop Inn residents from using Logistics (`.pull`, `.stash`, recipe pulls and rest).
+- Teal colours, a shorter `.inn help`, a new welcome message and new `.inn info` rules for Hengoria.
+
+---
+
 ![](logo.png)
 # KindredInnkeeper for V Rising
 
